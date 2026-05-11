@@ -1,0 +1,15 @@
+[package]
+name = "zht-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core data structures, error types, and utilities for ZHT"
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+bytes = { workspace = true }
+once_cell = { workspace = true }
+uuid = { workspace = true }

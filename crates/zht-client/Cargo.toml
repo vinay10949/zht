@@ -1,0 +1,19 @@
+[package]
+name = "zht-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ZHT client library for Rust"
+
+[dependencies]
+zht-common = { path = "../zht-common" }
+zht-proto = { path = "../zht-proto" }
+zht-config = { path = "../zht-config" }
+tracing = { workspace = true }
+bytes = { workspace = true }
+prost = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

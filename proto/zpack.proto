@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package zht.proto;
+
+// ZPack is the core wire protocol message for ZHT.
+// It carries all DHT operation requests and responses.
+message ZPack {
+    // Operation code:
+    //   "001" = lookup
+    //   "002" = remove
+    //   "003" = insert
+    //   "004" = append
+    //   "005" = compare_swap
+    //   "006" = state_change_callback
+    bytes opcode = 1;
+
+    // Key for the DHT operation
+    bytes key = 2;
+
+    // Value (used by insert, lookup response, append)
+    bytes val = 3;
+
+    // New value (used by compare_swap)
+    bytes newval = 4;
+
+    // Lease duration in milliseconds (used by state_change_callback)
+    bytes lease = 5;
+
+    // Whether val is null/empty
+    bool valnull = 6;
+
+    // Whether newval is null/empty (used by compare_swap)
+    bool newvalnull = 7;
+
+    // Replica number for replication support
+    int32 replicanum = 8;
+}

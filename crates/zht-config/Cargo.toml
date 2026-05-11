@@ -1,0 +1,15 @@
+[package]
+name = "zht-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Configuration parsing for ZHT (zht.conf, neighbor.conf)"
+
+[dependencies]
+zht-common = { path = "../zht-common" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

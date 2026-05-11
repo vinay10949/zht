@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package zht.proto;
+
+// Package is used for file/metadata operations (file system layer).
+message Package {
+    string virtual_path = 1;
+    string real_full_path = 2;
+    bool is_dir = 3;
+    // Negative number means it's not an original request
+    int32 replicanum = 4;
+    repeated string list_item = 5;
+}
