@@ -1,20 +1,22 @@
 [package]
-name = "zht-client"
+name = "zht-transport"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ZHT client library for Rust"
+description = "TCP transport layer for ZHT (client proxy + server listener)"
 
 [dependencies]
 zht-common = { path = "../zht-common" }
 zht-proto = { path = "../zht-proto" }
-zht-config = { path = "../zht-config" }
-zht-transport = { path = "../zht-transport" }
-tracing = { workspace = true }
+zht-storage = { path = "../zht-storage" }
 bytes = { workspace = true }
 prost = { workspace = true }
-anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = "0.7"
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

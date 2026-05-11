@@ -24,15 +24,15 @@
 //! ```
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use prost::Message;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use zht_config::AppConfig;
 use zht_common::constants::*;
 use zht_common::error::ZhtError;
-// Phase 2+: serialize and send via proxy
 use zht_proto::ZPack;
+use zht_transport::TcpProxy;
 
 /// The ZHT client for performing distributed hash table operations.
 ///
@@ -41,7 +41,8 @@ use zht_proto::ZPack;
 pub struct ZHTClient {
     /// Application configuration (ZHT params + neighbor list).
     config: AppConfig,
-
+    /// TCP proxy for sending/receiving messages.
+    proxy: Arc<TcpProxy>,
     /// Whether the client has been initialized.
     initialized: bool,
 }
@@ -66,6 +67,7 @@ impl ZHTClient {
 
         Ok(Self {
             config,
+            proxy: Arc::new(TcpProxy::new()),
             initialized: false,
         })
     }
@@ -79,19 +81,14 @@ impl ZHTClient {
             return Ok(());
         }
 
-        // In Phase 2+, this will:
-        // 1. Create the appropriate Proxy based on protocol (TCP/UDP/MPI)
-        // 2. Initialize connection pool
-        // 3. Warm up connections to neighbor nodes
-
         self.initialized = true;
-        info!("ZHTClient initialized successfully");
+        info!("ZHTClient initialized (protocol: {})", self.config.zht.protocol());
         Ok(())
     }
 
     /// Insert a key-value pair into the DHT.
     ///
-    /// Returns `Ok(())` on success.
+    /// Returns `Ok(())` on success (server responds with "000" status).
     pub async fn insert(&self, key: &str, value: &str) -> Result<()> {
         self.ensure_initialized()?;
         self.check_key(key)?;
@@ -104,11 +101,15 @@ impl ZHTClient {
         zpack.key = key.as_bytes().to_vec();
         zpack.val = value.as_bytes().to_vec();
 
-        // Phase 2+: serialize and send via proxy
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "INSERT serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        Ok(())
+        match status.as_str() {
+            "000" => Ok(()),
+            "-01" => Err(anyhow::anyhow!(ZhtError::EmptyKey)),
+            "-03" => Err(anyhow::anyhow!(ZhtError::Internal("Server error on INSERT".into()))),
+            code => Err(anyhow::anyhow!(ZhtError::Internal(format!("INSERT failed: {}", code)))),
+        }
     }
 
     /// Look up a value by key.
@@ -125,12 +126,24 @@ impl ZHTClient {
         zpack.opcode = OPC_LOOKUP.as_bytes().to_vec();
         zpack.key = key.as_bytes().to_vec();
 
-        // Phase 2+: serialize, send via proxy, receive and parse response
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "LOOKUP serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        // Placeholder: return not-found error until transport is implemented
-        Err(anyhow::anyhow!(ZhtError::KeyNotFound(key.to_string())))
+        if status == "-92" {
+            return Err(anyhow::anyhow!(ZhtError::KeyNotFound(key.to_string())));
+        }
+        if status != "000" {
+            return Err(anyhow::anyhow!(ZhtError::Internal(format!("LOOKUP failed: {}", status))));
+        }
+
+        // Response lease field contains "000<value>" for lookups
+        let lease_data = String::from_utf8_lossy(&response.lease);
+        if lease_data.len() > 3 {
+            Ok(lease_data[3..].to_string())
+        } else {
+            // Value is in the val field
+            Ok(String::from_utf8_lossy(&response.val).to_string())
+        }
     }
 
     /// Remove a key from the DHT.
@@ -147,10 +160,14 @@ impl ZHTClient {
         zpack.opcode = OPC_REMOVE.as_bytes().to_vec();
         zpack.key = key.as_bytes().to_vec();
 
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "REMOVE serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        Ok(())
+        match status.as_str() {
+            "000" => Ok(()),
+            "-92" => Err(anyhow::anyhow!(ZhtError::KeyNotFound(key.to_string()))),
+            code => Err(anyhow::anyhow!(ZhtError::Internal(format!("REMOVE failed: {}", code)))),
+        }
     }
 
     /// Append data to an existing key's value.
@@ -168,10 +185,14 @@ impl ZHTClient {
         zpack.key = key.as_bytes().to_vec();
         zpack.val = value.as_bytes().to_vec();
 
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "APPEND serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        Ok(())
+        match status.as_str() {
+            "000" => Ok(()),
+            "-03" => Err(anyhow::anyhow!(ZhtError::Internal("Server error on APPEND".into()))),
+            code => Err(anyhow::anyhow!(ZhtError::Internal(format!("APPEND failed: {}", code)))),
+        }
     }
 
     /// Atomically compare-and-swap a value.
@@ -196,11 +217,23 @@ impl ZHTClient {
         zpack.val = expected.as_bytes().to_vec();
         zpack.newval = new_value.as_bytes().to_vec();
 
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "COMPARE_SWAP serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        // Placeholder
-        Err(anyhow::anyhow!(ZhtError::KeyNotFound(key.to_string())))
+        if status == "-92" {
+            return Err(anyhow::anyhow!(ZhtError::KeyNotFound(key.to_string())));
+        }
+        if status == "-02" {
+            // CAS mismatch — val contains the actual current value
+            let current = String::from_utf8_lossy(&response.val).to_string();
+            return Err(anyhow::anyhow!(ZhtError::CasMismatch {
+                expected: expected.to_string(),
+                actual: current,
+            }));
+        }
+
+        // Success — return current value (which is now the new value)
+        Ok(String::from_utf8_lossy(&response.val).to_string())
     }
 
     /// State change callback — block until the key's value matches the expected value.
@@ -226,10 +259,14 @@ impl ZHTClient {
         zpack.val = expected.as_bytes().to_vec();
         zpack.lease = lease_ms.to_string().as_bytes().to_vec();
 
-        let serialized = self.serialize_zpack(&zpack)?;
-        debug!(key, bytes = serialized.len(), "STATE_CHANGE_CALLBACK serialized");
+        let response = self.proxy.sendrecv(&node.host, node.port, &zpack).await?;
+        let status = parse_status(&response);
 
-        Ok(())
+        match status.as_str() {
+            "000" => Ok(()),
+            "-04" => Err(anyhow::anyhow!(ZhtError::LeaseExpired { lease_ms })),
+            code => Err(anyhow::anyhow!(ZhtError::Internal(format!("SCCB failed: {}", code)))),
+        }
     }
 
     /// Tear down the client and release resources.
@@ -237,8 +274,6 @@ impl ZHTClient {
         if !self.initialized {
             return Ok(());
         }
-
-        // Phase 2+: close connection pools, release resources
 
         self.initialized = false;
         info!("ZHTClient torn down");
@@ -266,19 +301,22 @@ impl ZHTClient {
             Ok(())
         }
     }
+}
 
-    fn serialize_zpack(&self, zpack: &ZPack) -> Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        zpack.encode(&mut buf)
-            .map_err(|e| ZhtError::ProtobufEncodeError(e.to_string()))?;
-        Ok(buf)
+/// Parse the 3-character status code from a ZPack response's lease field.
+fn parse_status(zpack: &ZPack) -> String {
+    let lease_bytes = &zpack.lease;
+    if lease_bytes.len() >= 3 {
+        String::from_utf8_lossy(&lease_bytes[..3]).into_owned()
+    } else {
+        String::from_utf8_lossy(lease_bytes).into_owned()
     }
 }
 
 impl Drop for ZHTClient {
     fn drop(&mut self) {
         if self.initialized {
-            debug!("ZHTClient dropped without explicit teardown");
+            warn!("ZHTClient dropped without explicit teardown — resources may leak");
         }
     }
 }

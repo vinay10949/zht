@@ -3,7 +3,11 @@ name = "zht-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ZHT server binary"
+description = "ZHT server library and binary"
+
+[lib]
+name = "zht_server"
+path = "src/lib.rs"
 
 [[bin]]
 name = "zhtserver"
@@ -13,8 +17,17 @@ path = "src/main.rs"
 zht-common = { path = "../zht-common" }
 zht-proto = { path = "../zht-proto" }
 zht-config = { path = "../zht-config" }
+zht-storage = { path = "../zht-storage" }
+zht-transport = { path = "../zht-transport" }
+zht-cache = { path = "../zht-cache" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = "0.7"
+parking_lot = { workspace = true }
+prost = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

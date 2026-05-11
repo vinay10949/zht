@@ -1,0 +1,15 @@
+[package]
+name = "zht-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NoVoHT — Non-Volatile Hash Table storage engine for ZHT"
+
+[dependencies]
+zht-common = { path = "../zht-common" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
